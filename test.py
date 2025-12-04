@@ -4,7 +4,7 @@ import pandas as pd
 # ---------------------------------------------------------
 # 🔑 PASTE YOUR ALPHA VANTAGE API KEY HERE
 # Get one for free at: https://www.alphavantage.co/support/#api-key
-API_KEY = "3YG17HDDK9OBPHU4"
+API_KEY = ""
 # ---------------------------------------------------------
 
 def get_market_movers(api_key):
