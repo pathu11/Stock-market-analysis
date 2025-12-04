@@ -1,119 +1,150 @@
 import streamlit as st
-from agents import create_single_stock_crew
+from agents import create_single_stock_crew, create_market_scanner_crew
 import os
 from dotenv import load_dotenv
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import re
+import requests
+from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
 
 # Page Config
-st.set_page_config(page_title="AI Stock Analyst", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Stock Insights AI", page_icon="⚡", layout="wide")
 
-# Custom CSS
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    .stMetric {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 10px;
-    }
-    /* Force text to black so it is visible on the light background */
-    .stMetric > div {
-        color: #000000 !important;
-    }
-    /* Optional: Ensure the label (top text) is also black */
-    .stMetric label {
-        color: #000000 !important;
-    }
+    .stApp { background-color: #050505; background-image: radial-gradient(circle at 50% 0%, #1a1a2e 0%, #050505 60%); color: #e0e0e0; }
+    .metric-card { background-color: #0f1116; border: 1px solid #1e2128; border-radius: 12px; padding: 20px; }
+    .stButton>button { background-color: #3b82f6; color: white; border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
-# Sidebar
+# --- HELPER: ALPHA VANTAGE FETCHER ---
+def fetch_top_gainers(api_key):
+    """Fetches top gainers directly from Alpha Vantage API"""
+    url = f"https://www.alphavantage.co/query?function=TOP_GAINERS_LOSERS&apikey={api_key}"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if "top_gainers" in data:
+            return data["top_gainers"][:5] # Return top 5
+        return []
+    except:
+        return []
+
+# --- STATE MANAGEMENT ---
+if "single_analysis" not in st.session_state: st.session_state.single_analysis = None
+if "scanner_report" not in st.session_state: st.session_state.scanner_report = None
+if "current_ticker" not in st.session_state: st.session_state.current_ticker = None
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Control Panel")
-    st.info("This tool performs a deep-dive analysis on a single stock using 4 AI Agents.")
+    st.title("⚡ Control Center")
     
-    # Securely fetch API Key
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        st.error("⚠️ GOOGLE_API_KEY not found in .env")
+    # Keys from .env ONLY
+    google_key = os.getenv("GOOGLE_API_KEY")
+    av_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    
+    if not google_key:
+        st.error("⚠️ Missing GOOGLE_API_KEY in .env")
         st.stop()
     
-    st.success("API Key Loaded Securely")
+    if not av_key:
+        st.error("⚠️ Missing ALPHA_VANTAGE_KEY in .env")
+        st.stop()
 
-# Main Content
-st.title("📈 Single Stock AI Analyst")
-st.markdown("### Powered by Gemini 1.5 Flash")
-
-# Input Section
-col1, col2 = st.columns([3, 1])
-with col1:
-    ticker = st.text_input("Enter Stock Ticker", placeholder="e.g. AAPL, NVDA, TSLA", value="AAPL").upper()
-with col2:
-    run_btn = st.button("🚀 Analyze Stock", use_container_width=True)
-
-if run_btn and ticker:
+    st.success("✅ API Keys Loaded")
+    st.markdown("---")
     
-    # 1. Fetch & Display Live Market Data FIRST (Fast Feedback)
-    try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="6mo")
-        info = stock.info
-        
-        if hist.empty:
-            st.error("No data found for this ticker.")
-            st.stop()
+    app_mode = st.radio("Select Mode:", ["Single Ticker Analysis", "Market Trend Scanner"])
 
-        # Display Metrics
-        st.divider()
-        m1, m2, m3, m4 = st.columns(4)
-        current_price = info.get('currentPrice', hist['Close'].iloc[-1])
-        prev_close = info.get('previousClose', hist['Close'].iloc[-2])
-        delta = current_price - prev_close
-        
-        m1.metric("Current Price", f"${current_price:.2f}", f"{delta:.2f}")
-        m2.metric("Market Cap", f"${info.get('marketCap', 0):,}")
-        m3.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
-        m4.metric("52W High", f"${info.get('fiftyTwoWeekHigh', 0)}")
+# --- MAIN APP ---
 
-        # Interactive Chart (Candlestick)
-        fig = go.Figure(data=[go.Candlestick(x=hist.index,
-                        open=hist['Open'],
-                        high=hist['High'],
-                        low=hist['Low'],
-                        close=hist['Close'])])
-        fig.update_layout(title=f"{ticker} Price History (6 Months)", xaxis_rangeslider_visible=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-    except Exception as e:
-        st.warning(f"Could not load live market data: {e}")
-
-    # 2. Run AI Analysis (Slower Process)
-    st.divider()
-    st.subheader(f"🤖 AI Crew Analysis for {ticker}")
+if app_mode == "Single Ticker Analysis":
+    st.markdown("## 📈 Deep Dive Analysis")
     
-    with st.status("Initializing Agents...", expanded=True) as status:
-        try:
-            # Initialize Crew
-            status.write("🧠 Waking up Analyst Agents...")
-            crew = create_single_stock_crew(ticker, api_key)
-            
-            status.write(f"🔍 Fundamental Analyst is reading {ticker} balance sheets...")
-            status.write(f"📉 Technical Analyst is measuring {ticker} trends...")
-            status.write(f"🛡️ Risk Officer is calculating volatility...")
-            
-            # Run the Crew
-            result = crew.kickoff()
-            
-            status.write("✅ Portfolio Manager has finalized the report.")
-            status.update(label="Analysis Complete", state="complete", expanded=False)
+    # Inputs
+    ticker = st.text_input("Stock Ticker", value="AAPL").upper()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start Date", datetime.now() - timedelta(days=180))
+    with col2:
+        end_date = st.date_input("End Date", datetime.now())
 
-            # Display Final Report
-            st.markdown(result)
+    if st.button("🚀 Analyze Stock"):
+        # Reset previous session data if ticker changes or new run requested
+        st.session_state.single_analysis = None
+        st.session_state.current_ticker = ticker
+        
+        with st.status("🤖 AI Agents Working...", expanded=True) as status:
+            try:
+                # 1. Run Crew
+                status.write(f"🧠 Analyzing {ticker} from {start_date} to {end_date}...")
+                
+                # Pass dates to the crew
+                crew = create_single_stock_crew(ticker, str(start_date), str(end_date), google_key, av_key)
+                result = crew.kickoff()
+                
+                st.session_state.single_analysis = str(result)
+                status.update(label="Complete", state="complete", expanded=False)
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-        except Exception as e:
-            st.error(f"AI Analysis Failed: {e}")
-            st.info("Try waiting 60 seconds (Free Tier Limits) or check your API key.")
+    # Display Analysis
+    if st.session_state.single_analysis:
+        st.markdown(f"### Analysis Report: {st.session_state.current_ticker}")
+        st.markdown(st.session_state.single_analysis)
+        
+        st.download_button(
+            label="📥 Download Report",
+            data=st.session_state.single_analysis,
+            file_name=f"{st.session_state.current_ticker}_report.txt",
+            mime="text/plain"
+        )
+
+elif app_mode == "Market Trend Scanner":
+    st.markdown("## 🌍 Real-Time Market Scanner")
+    st.info("Fetches Top Gainers from Alpha Vantage and analyzes them.")
+    
+    if st.button("🔍 Scan Top Gainers"):
+        # Clear previous scan results
+        st.session_state.scanner_report = None
+        
+        with st.status("Scanning Market...", expanded=True) as status:
+            try:
+                status.write("📡 Fetching Top Gainers from Alpha Vantage...")
+                gainers_data = fetch_top_gainers(av_key)
+                
+                if not gainers_data:
+                    st.error("Failed to fetch gainers (Check API Key or Limit). Using fallback.")
+                    top_tickers = ['NVDA', 'TSLA', 'AMD'] # Fallback
+                else:
+                    top_tickers = [g['ticker'] for g in gainers_data]
+                    # Display Gainers
+                    cols = st.columns(len(top_tickers))
+                    for i, t in enumerate(top_tickers):
+                        cols[i].metric(t, f"+{gainers_data[i]['change_percentage']}")
+
+                status.write(f"🧠 AI Analyzing: {', '.join(top_tickers)}")
+                crew = create_market_scanner_crew(top_tickers, google_key)
+                report = crew.kickoff()
+                st.session_state.scanner_report = str(report)
+                
+                status.update(label="Complete", state="complete", expanded=False)
+            except Exception as e:
+                st.error(f"Scan Error: {e}")
+
+    if st.session_state.scanner_report:
+        st.markdown("### 🧠 Strategic Analysis")
+        # Color coding logic
+        report_html = st.session_state.scanner_report.replace("Signal: BUY", "Signal: <span style='color:#4ade80;font-weight:bold'>BUY</span>")
+        report_html = report_html.replace("Signal: PROFIT-TAKE", "Signal: <span style='color:#f87171;font-weight:bold'>PROFIT-TAKE</span>")
+        report_html = report_html.replace("Signal: HOLD", "Signal: <span style='color:#facc15;font-weight:bold'>HOLD</span>")
+        
+        st.markdown(report_html, unsafe_allow_html=True)

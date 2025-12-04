@@ -1,8 +1,11 @@
 crewai
-langchain_google_genai
+crewai[tools]
+litellm
 yfinance
 streamlit
 pandas
 ta
 lxml
 python-dotenv
+duckduckgo-search
+requests
