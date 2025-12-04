@@ -1,0 +1,8 @@
+crewai
+langchain_google_genai
+yfinance
+streamlit
+pandas
+ta
+lxml
+python-dotenv
