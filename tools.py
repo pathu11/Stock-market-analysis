@@ -1,5 +1,5 @@
 import yfinance as yf
-from langchain.tools import tool
+from crewai.tools import tool
 import pandas as pd
 import ta
 import numpy as np
@@ -21,11 +21,7 @@ class StockAnalysisTools:
             tickers = df['Symbol'].tolist()
             
             # For demo speed, we'll take a random sample or top 20 to screen 
-            # (Fetching 500 live prices takes too long for a web demo)
-            # In production, use a db or batch API.
-            # Here we just pick a few popular ones to simulate a "result" of a screen
-            # or screen a small batch.
-            subset = tickers[:20]  # Let's screen the first 20 for the demo
+            subset = tickers[:20] 
             
             screened_results = []
             
@@ -50,7 +46,6 @@ class StockAnalysisTools:
             
             return f"Top 5 Screened Stocks based on Momentum: {', '.join(top_5)}"
         except Exception as e:
-            # Fallback if scraping fails
             return "AAPL, NVDA, MSFT, AMD, TSLA"
 
     @tool("Calculate Risk Metrics")
@@ -77,7 +72,7 @@ class StockAnalysisTools:
             daily_drawdown = hist['Close'] / rolling_max - 1.0
             max_drawdown = daily_drawdown.min() * 100
             
-            # Beta (Approximate using market correlation if not available directly)
+            # Beta
             beta = stock.info.get('beta', 'N/A')
             
             return f"""

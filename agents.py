@@ -1,69 +1,57 @@
-from crewai import Agent, Task, Crew, Process
+from crewai import Agent, Task, Crew, Process, LLM
 from tools import StockAnalysisTools
-from langchain_google_genai import ChatGoogleGenerativeAI
 import os
 
-def create_market_scanner_crew(google_api_key: str):
+def create_single_stock_crew(ticker: str, google_api_key: str):
     
-    # --- LLM CONFIGURATION (GEMINI) ---
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        verbose=True,
-        temperature=0.5,
-        google_api_key=google_api_key
+    # --- LLM CONFIGURATION ---
+    llm = LLM(
+        model="gemini/gemini-2.5-flash",
+        api_key=google_api_key,
+        temperature=0.3, # Lower temperature for more factual analysis
+        verbose=True
     )
 
     # --- AGENTS ---
 
-    # 1. The Screener
-    screener_agent = Agent(
-        role='Chief Market Screener',
-        goal='Identify the top 5 investable stocks from the S&P 500 based on momentum.',
-        backstory="You are an algorithm-driven trader. You scan the market to find the top 5 stocks with the highest momentum and volume.",
-        verbose=True,
-        allow_delegation=False,
-        tools=[StockAnalysisTools.fetch_and_screen_sp500],
-        llm=llm
-    )
-
-    # 2. Fundamental Analyst
+    # 1. Fundamental Analyst
     fundamental_agent = Agent(
         role='Senior Fundamental Analyst',
-        goal='Analyze the financial health of the 5 screened stocks.',
-        backstory="You are a value investor. You check P/E ratios, earnings growth, and debt levels. You are thorough.",
+        goal=f'Analyze the financial health and intrinsic value of {ticker}.',
+        backstory="You are a value investor like Warren Buffett. You dig into P/E ratios, earnings growth, and market cap to determine if a stock is undervalued.",
         verbose=True,
         allow_delegation=False,
         tools=[StockAnalysisTools.fetch_fundamental_data],
         llm=llm
     )
 
-    # 3. Technical Analyst
+    # 2. Technical Analyst
     technical_agent = Agent(
         role='Chief Technical Analyst',
-        goal='Analyze the technical indicators (RSI, MACD) for the 5 screened stocks.',
-        backstory="You are a expert chartist. You look for trend confirmations and entry points.",
+        goal=f'Analyze the price action and trends of {ticker}.',
+        backstory="You are a expert chartist. You look for support/resistance, RSI levels, and MACD crossovers to find the best entry points.",
         verbose=True,
         allow_delegation=False,
         tools=[StockAnalysisTools.calculate_technicals],
         llm=llm
     )
 
-    # 4. Risk Analyst
+    # 3. Risk Analyst
     risk_agent = Agent(
         role='Chief Risk Officer',
-        goal='Evaluate risk metrics (Beta, Volatility) for the 5 screened stocks.',
-        backstory="You are a risk manager. You calculate volatility and max drawdown to ensure capital preservation.",
+        goal=f'Evaluate the volatility and downside risk of {ticker}.',
+        backstory="You are a pessimist. You calculate Beta, Max Drawdown, and volatility to warn investors of potential losses.",
         verbose=True,
         allow_delegation=False,
         tools=[StockAnalysisTools.calculate_risk_metrics],
         llm=llm
     )
 
-    # 5. Portfolio Manager
+    # 4. Portfolio Manager
     manager_agent = Agent(
         role='Portfolio Manager',
-        goal='Synthesize all analysis into a final ranked list with scores.',
-        backstory="You are the lead portfolio manager. You take the raw analysis from your team and assign numerical scores.",
+        goal=f'Synthesize a final investment decision for {ticker}.',
+        backstory="You make the final call. You combine the fundamental, technical, and risk reports into a clear Buy, Sell, or Hold recommendation.",
         verbose=True,
         allow_delegation=False,
         llm=llm
@@ -71,70 +59,56 @@ def create_market_scanner_crew(google_api_key: str):
 
     # --- TASKS ---
 
-    task_screen = Task(
-        description="""
-        Fetch the S&P 500 list and identify the top 5 candidates based on momentum and volume using the screening tool.
-        Your output MUST be a clean, comma-separated list of just the 5 tickers.
-        Example Output: AAPL, NVDA, MSFT, AMD, TSLA
-        """,
-        expected_output="A comma-separated list of 5 stock tickers.",
-        agent=screener_agent
-    )
-
     task_fundamentals = Task(
-        description="""
-        You will receive a list of 5 stock tickers from the Screener.
-        For EACH ticker in that list, you MUST call the 'Fetch Fundamental Data' tool.
-        Do not summarize until you have fetched data for ALL 5 stocks.
+        description=f"""
+        Fetch the fundamental data for {ticker} (P/E, Market Cap, EPS, Sector).
+        Analyze the company's valuation compared to the general market.
         """,
-        expected_output="A detailed summary of fundamental metrics for ALL 5 stocks.",
-        agent=fundamental_agent,
-        context=[task_screen]
+        expected_output=f"A summary of {ticker}'s fundamental health and valuation.",
+        agent=fundamental_agent
     )
 
     task_technicals = Task(
-        description="""
-        You will receive a list of 5 stock tickers from the Screener.
-        For EACH ticker in that list, you MUST call the 'Calculate Technical Indicators' tool.
-        Do not summarize until you have calculated indicators for ALL 5 stocks.
+        description=f"""
+        Calculate technical indicators for {ticker} (RSI, MACD, Moving Averages).
+        Identify the current trend (Bullish/Bearish/Neutral) and any key support/resistance levels.
         """,
-        expected_output="A detailed summary of technical indicators for ALL 5 stocks.",
-        agent=technical_agent,
-        context=[task_screen]
+        expected_output=f"A technical analysis report for {ticker} with trend identification.",
+        agent=technical_agent
     )
 
     task_risk = Task(
-        description="""
-        You will receive a list of 5 stock tickers from the Screener.
-        For EACH ticker in that list, you MUST call the 'Calculate Risk Metrics' tool.
-        Do not summarize until you have calculated risk metrics for ALL 5 stocks.
+        description=f"""
+        Calculate risk metrics for {ticker} (Beta, Volatility, Max Drawdown).
+        Assess if this stock is Low, Medium, or High risk for a conservative investor.
         """,
-        expected_output="A detailed summary of risk metrics for ALL 5 stocks.",
-        agent=risk_agent,
-        context=[task_screen]
+        expected_output=f"A risk assessment for {ticker}.",
+        agent=risk_agent
     )
 
-    task_rank = Task(
-        description="""
-        You have received detailed reports from the Fundamental Analyst, Technical Analyst, and Risk Officer for 5 specific stocks.
+    task_report = Task(
+        description=f"""
+        Review the reports from the Fundamental, Technical, and Risk analysts for {ticker}.
         
-        Your task is to:
-        1. Review the data for each stock.
-        2. Assign a score (0-100) for Technicals, Fundamentals, and Risk.
-        3. Calculate a Total Score (Average of the three).
-        4. Rank the 5 stocks from #1 (Best) to #5 (Worst).
+        Generate a Final Investment Report formatted exactly like this:
+        
+        # Investment Report: {ticker}
+        
+        ## 1. Executive Summary
+        **Recommendation:** [STRONG BUY / BUY / HOLD / SELL / STRONG SELL]
+        **Confidence Score:** [0-100]%
+        *(One paragraph summary of why)*
 
-        Output the final report in this EXACT format for each stock:
+        ## 2. Detailed Analysis
+        * **Fundamentals:** [Key insights on valuation]
+        * **Technicals:** [Key insights on price action]
+        * **Risk Profile:** [Risk assessment]
 
-        Stock: [Ticker Symbol]
-        - Total Score: [0-100]
-        - Investment Recommendation: [Strong Buy/Buy/Hold/Sell]
-        - Technical Analysis Score: [0-100]
-        - Fundamental Analysis Score: [0-100]
-        - Risk Assessment Score: [0-100]
-        - Analysis: [A concise 2-sentence explanation of why it received this score]
+        ## 3. Key Levels
+        * **Target Entry Price:** [Price]
+        * **Stop Loss:** [Price]
         """,
-        expected_output="A ranked list of 5 stocks with detailed scores and analysis.",
+        expected_output=f"A comprehensive investment report for {ticker}.",
         agent=manager_agent,
         context=[task_fundamentals, task_technicals, task_risk]
     )
@@ -142,10 +116,11 @@ def create_market_scanner_crew(google_api_key: str):
     # --- CREW ---
     
     crew = Crew(
-        agents=[screener_agent, fundamental_agent, technical_agent, risk_agent, manager_agent],
-        tasks=[task_screen, task_fundamentals, task_technicals, task_risk, task_rank],
+        agents=[fundamental_agent, technical_agent, risk_agent, manager_agent],
+        tasks=[task_fundamentals, task_technicals, task_risk, task_report],
         process=Process.sequential,
-        verbose=True
+        verbose=True,
+        max_rpm=10 # Higher RPM allowed since we are only doing 1 stock
     )
 
     return crew
